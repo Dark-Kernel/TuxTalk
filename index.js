@@ -9,13 +9,9 @@ import { createWriteStream } from 'fs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 import * as wrtc from 'wrtc';
-// import RTCPeerConnection from 'wrtc/lib/peerconnection';
 import RTCPeerConnection from 'wrtc/lib/peerconnection.js';
 import RTCSessionDescription from 'wrtc/lib/sessiondescription.js';
 import RTCIceCandidate from 'wrtc/lib/icecandidate.js';
-
-console.log(process.env.TURN_SERVER_URL)
-console.log(process.env.TURN_SERVER_USERNAME)
 
 // Initialize blessed screen
 const screen = blessed.screen({
@@ -126,7 +122,8 @@ let currentPeer = null;
 let currentPanel = 'users'; // 'users' or 'input'
 let fileReceiveState = new Map();
 
-const socket = io('http://localhost:3000');
+// const socket = io('http://localhost:3000');
+const socket = io(`${process.env.SIGNALING_SERVER_URL}`);
 
 function log(message, type = 'info') {
   const timestamp = new Date().toLocaleTimeString();
