@@ -3,6 +3,8 @@
     "blessed": "^0.1.81",
     "chalk": "^5.4.1",
     "socket.io-client": "^4.8.1",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7",
     "wrtc": "^0.4.7"
   },
   "type": "module"
