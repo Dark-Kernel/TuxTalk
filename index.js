@@ -123,7 +123,8 @@ let currentPanel = 'users'; // 'users' or 'input'
 let fileReceiveState = new Map();
 
 // const socket = io('http://localhost:3000');
-const socket = io(`${process.env.SIGNALING_SERVER_URL}`);
+const socket = io('http://155.248.250.55:3000');
+// const socket = io(`${process.env.SIGNALING_SERVER_URL}`);
 
 function log(message, type = 'info') {
   const timestamp = new Date().toLocaleTimeString();
@@ -316,45 +317,144 @@ function updateUsersList(users = []) {
       usersList.addItem(`${status} ${id}${id === currentPeer ? ' {blue-fg}[SELECTED]{/}' : ''}`);
     });
   screen.render();
+
 }
 
+async function createNewPeerConnection(userId) {
+  const peerConnection = new RTCPeerConnection({
+    iceServers: [
+      {
+        urls: "turn:relay1.expressturn.com:3478",
+        username: "efL6P4932MPCZWWEST",
+        credential: "RRVxBMauicb6pO4k"
+      }
+    ]
+  });
+
+  return new Promise((resolve, reject) => {
+    // Create data channel before offer
+    const dataChannel = peerConnection.createDataChannel('chat', {
+      negotiated: false,
+      ordered: true
+    });
+
+    // Setup error handlers
+    peerConnection.onerror = (error) => {
+      log(`Peer connection error: ${error}`, 'error');
+      reject(error);
+    };
+
+    peerConnection.oniceconnectionstatechange = () => {
+      log(`ICE Connection State: ${peerConnection.iceConnectionState}`, 'info');
+      
+      if (peerConnection.iceConnectionState === 'failed') {
+        log('ICE Connection Failed', 'error');
+        reject(new Error('ICE Connection Failed'));
+      }
+    };
+
+    dataChannel.onopen = () => {
+      log(`Data channel opened for ${userId}`, 'success');
+    };
+
+    dataChannel.onerror = (error) => {
+      log(`Data channel error: ${error}`, 'error');
+      reject(error);
+    };
+
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit('ice-candidate', event.candidate, userId);
+      }
+    };
+
+    resolve({ peerConnection, dataChannel });
+  });
+}
+
+
+
+// async function connectToPeer(userId) {
+//   if (userId === currentPeer) return;
+  
+//   currentPeer = userId;
+//   updateChatDisplay(userId);
+//   // updateUsersList(userId);
+
+//   if (connections.has(userId)) {
+//     const conn = connections.get(userId);
+//     if (conn.dataChannel.readyState === 'open') return;
+//   }
+
+//   log(`Initiating connection to: ${userId}`, 'info');
+
+//   const peerConnection = new RTCPeerConnection(configuration);
+//   const dataChannel = peerConnection.createDataChannel('chat');
+  
+//   setupDataChannel(dataChannel, userId);
+  
+//   connections.set(userId, {
+//     peerConnection,
+//     dataChannel
+//   });
+
+//   peerConnection.onicecandidate = (event) => {
+//     if (event.candidate) {
+//       socket.emit('ice-candidate', event.candidate, userId);
+//     }
+//   };
+
+//   try {
+//     const offer = await peerConnection.createOffer();
+//     await peerConnection.setLocalDescription(offer);
+//     socket.emit('offer', offer, userId);
+//   } catch (err) {
+//     log(`Error creating offer: ${err.message}`, 'error');
+//   }
+// }
 
 async function connectToPeer(userId) {
   if (userId === currentPeer) return;
   
   currentPeer = userId;
   updateChatDisplay(userId);
-  // updateUsersList(userId);
 
+  // Remove any existing connection
   if (connections.has(userId)) {
-    const conn = connections.get(userId);
-    if (conn.dataChannel.readyState === 'open') return;
+    const existingConn = connections.get(userId);
+    try {
+      existingConn.dataChannel?.close();
+      existingConn.peerConnection?.close();
+    } catch (err) {
+      log(`Error closing existing connection: ${err.message}`, 'warning');
+    }
+    connections.delete(userId);
   }
 
-  log(`Initiating connection to: ${userId}`, 'info');
-
-  const peerConnection = new RTCPeerConnection(configuration);
-  const dataChannel = peerConnection.createDataChannel('chat');
-  
-  setupDataChannel(dataChannel, userId);
-  
-  connections.set(userId, {
-    peerConnection,
-    dataChannel
-  });
-
-  peerConnection.onicecandidate = (event) => {
-    if (event.candidate) {
-      socket.emit('ice-candidate', event.candidate, userId);
-    }
-  };
-
   try {
+    log(`Initiating connection to: ${userId}`, 'info');
+
+    // Create new peer connection
+    const { peerConnection, dataChannel } = await createNewPeerConnection(userId);
+    
+    // Setup data channel
+    setupDataChannel(dataChannel, userId);
+    
+    // Store connection
+    connections.set(userId, {
+      peerConnection,
+      dataChannel
+    });
+
+    // Create and send offer
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
     socket.emit('offer', offer, userId);
+
   } catch (err) {
-    log(`Error creating offer: ${err.message}`, 'error');
+    log(`Connection error: ${err.message}`, 'error');
+    connections.delete(userId);
+    currentPeer = null;
   }
 }
 
@@ -362,35 +462,113 @@ async function connectToPeer(userId) {
 // socket.on('users-update', updateUsersList);
 socket.on('users-update', (users) => updateUsersList(users));
 
+// socket.on('offer', async (offer, fromId) => {
+//   if (!connections.has(fromId)) {
+//     log(`Received connection offer from: ${fromId}`, 'info');
+
+//     const peerConnection = new RTCPeerConnection(configuration);
+
+//     peerConnection.ondatachannel = (event) => {
+//       const dataChannel = event.channel;
+//       setupDataChannel(dataChannel, fromId);
+//       connections.set(fromId, { peerConnection, dataChannel });
+//     };
+
+//     peerConnection.onicecandidate = (event) => {
+//       if (event.candidate) {
+//         socket.emit('ice-candidate', event.candidate, fromId);
+//       }
+//     };
+
+//     try {
+//       await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+//       const answer = await peerConnection.createAnswer();
+//       await peerConnection.setLocalDescription(answer);
+//       socket.emit('answer', answer, fromId);
+//     } catch (err) {
+//       log(`Error handling offer: ${err.message}`, 'error');
+//     }
+//   }
+// });
+
 socket.on('offer', async (offer, fromId) => {
-  if (!connections.has(fromId)) {
+  try {
+    // Close existing connection if it exists
+    if (connections.has(fromId)) {
+      const existingConn = connections.get(fromId);
+      try {
+        existingConn.dataChannel?.close();
+        existingConn.peerConnection?.close();
+      } catch (err) {
+        log(`Error closing existing connection: ${err.message}`, 'warning');
+      }
+      connections.delete(fromId);
+    }
+
     log(`Received connection offer from: ${fromId}`, 'info');
 
-    const peerConnection = new RTCPeerConnection(configuration);
+    const peerConnection = new RTCPeerConnection({
+      iceServers: [
+        {
+          urls: "turn:relay1.expressturn.com:3478",
+          username: "efL6P4932MPCZWWEST",
+          credential: "RRVxBMauicb6pO4k"
+        }
+      ]
+    });
 
-    peerConnection.ondatachannel = (event) => {
-      const dataChannel = event.channel;
-      setupDataChannel(dataChannel, fromId);
-      connections.set(fromId, { peerConnection, dataChannel });
-    };
+    return new Promise((resolve, reject) => {
+      peerConnection.ondatachannel = (event) => {
+        const dataChannel = event.channel;
+        setupDataChannel(dataChannel, fromId);
+        
+        connections.set(fromId, { 
+          peerConnection, 
+          dataChannel 
+        });
+      };
 
-    peerConnection.onicecandidate = (event) => {
-      if (event.candidate) {
-        socket.emit('ice-candidate', event.candidate, fromId);
-      }
-    };
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit('ice-candidate', event.candidate, fromId);
+        }
+      };
 
-    try {
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-      socket.emit('answer', answer, fromId);
-    } catch (err) {
-      log(`Error handling offer: ${err.message}`, 'error');
-    }
+      peerConnection.oniceconnectionstatechange = () => {
+        log(`ICE Connection State for ${fromId}: ${peerConnection.iceConnectionState}`, 'info');
+        
+        if (peerConnection.iceConnectionState === 'failed') {
+          log('ICE Connection Failed', 'error');
+          connections.delete(fromId);
+          reject(new Error('ICE Connection Failed'));
+        }
+      };
+
+      peerConnection.onerror = (error) => {
+        log(`Peer connection error: ${error}`, 'error');
+        connections.delete(fromId);
+        reject(error);
+      };
+
+      // Set remote description and create answer
+      peerConnection.setRemoteDescription(new RTCSessionDescription(offer))
+        .then(() => peerConnection.createAnswer())
+        .then(answer => peerConnection.setLocalDescription(answer))
+        .then(() => {
+          socket.emit('answer', peerConnection.localDescription, fromId);
+          resolve();
+        })
+        .catch(err => {
+          log(`Error handling offer: ${err.message}`, 'error');
+          connections.delete(fromId);
+          reject(err);
+        });
+    });
+
+  } catch (err) {
+    log(`Offer processing error: ${err.message}`, 'error');
   }
 });
-
 
 // socket.on('offer', async (offer, fromId) => {
 //   if (!connections.has(fromId)) {
@@ -423,13 +601,25 @@ socket.on('offer', async (offer, fromId) => {
 //   }
 // });
 
+// socket.on('answer', async (answer, fromId) => {
+//   const conn = connections.get(fromId);
+//   if (conn) {
+//     try {
+//       await conn.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+//     } catch (err) {
+//       log(`Error setting remote description: ${err.message}`, 'error');
+//     }
+//   }
+// });
+
 socket.on('answer', async (answer, fromId) => {
   const conn = connections.get(fromId);
-  if (conn) {
+  if (conn && conn.peerConnection) {
     try {
       await conn.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
     } catch (err) {
       log(`Error setting remote description: ${err.message}`, 'error');
+      connections.delete(fromId);
     }
   }
 });
